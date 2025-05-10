@@ -29,7 +29,7 @@ def load_list(path):
         exit(1)
 
 USER_AGENTS = load_list("useragents.txt")
-PROXIES = load_list("proxies.txt")
+PROXIES = load_list("proxylist.txt")
 
 def random_ip():
     return ".".join(str(random.randint(1, 255)) for _ in range(4))
